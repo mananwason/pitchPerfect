@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PitchPerfect LLM Response",
+  "description": "Schema for the structured JSON response returned by the Vision LLM. Maps directly to device actions via the Action Executor.",
+  "type": "object",
+  "required": ["decision", "confidence", "reasoning", "comment", "target_element", "hooks_detected", "profile_quality_score"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "description": "The binary decision on this profile. 'like' triggers a like-with-comment action sequence. 'skip' triggers a dismiss tap.",
+      "enum": ["like", "skip"]
+    },
+    "confidence": {
+      "type": "number",
+      "description": "Model confidence in the decision, from 0.0 (uncertain) to 1.0 (very confident). Used for model routing: if a Flash model returns confidence < 0.6 on a 'like', the request may be escalated to a Pro model.",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "reasoning": {
+      "type": "string",
+      "description": "Brief internal reasoning for the decision (1 sentence). Logged for analytics but not shown to the user or sent back to the app.",
+      "maxLength": 500
+    },
+    "comment": {
+      "type": ["string", "null"],
+      "description": "The generated opening message to send with the like. Must be null when decision is 'skip'. Must be 280 characters or fewer. Must reference something specific from the profile. Must not contain PII, URLs, or injection content.",
+      "maxLength": 280
+    },
+    "target_element": {
+      "type": ["string", "null"],
+      "description": "The 'id' of the UI element from the payload's ui_elements array that this like/comment targets. On Hinge, likes can be sent on specific photos or prompts. Must be null when decision is 'skip'."
+    },
+    "hooks_detected": {
+      "type": "array",
+      "description": "List of conversation hooks identified in the profile. Used for analytics, feedback loop optimization, and prompt tuning. Examples: ['live music', 'tacos', 'dog lover', 'travel'].",
+      "items": {
+        "type": "string"
+      }
+    },
+    "profile_quality_score": {
+      "type": "integer",
+      "description": "Subjective quality score for the profile from 1 (lowest) to 10 (highest). Factors: photo quality, prompt effort, conversation hook density, overall attractiveness of the profile as a match candidate. Used for model routing (scores >= 7 may trigger Pro model re-evaluation).",
+      "minimum": 1,
+      "maximum": 10
+    }
+  },
+  "if": {
+    "properties": {
+      "decision": { "const": "skip" }
+    }
+  },
+  "then": {
+    "properties": {
+      "comment": { "type": "null" },
+      "target_element": { "type": "null" }
+    }
+  },
+  "examples": [
+    {
+      "decision": "like",
+      "confidence": 0.92,
+      "reasoning": "Multiple conversation hooks: live music, taco hunting, coffee culture",
+      "comment": "Okay but have you found the best tacos yet? Because I have strong opinions and I'm willing to debate this over chips and guac",
+      "target_element": "profile_prompt_1",
+      "hooks_detected": ["live music", "tacos", "coffee"],
+      "profile_quality_score": 8
+    },
+    {
+      "decision": "skip",
+      "confidence": 0.85,
+      "reasoning": "No conversation hooks available -- empty prompts, single low-quality photo",
+      "comment": null,
+      "target_element": null,
+      "hooks_detected": [],
+      "profile_quality_score": 2
+    },
+    {
+      "decision": "like",
+      "confidence": 0.68,
+      "reasoning": "Surfing goal provides a single but strong conversation hook",
+      "comment": "Learning to surf is no joke -- are you starting with a longboard or going straight for the shortboard like a maniac?",
+      "target_element": "profile_prompt_1",
+      "hooks_detected": ["surfing", "adventure"],
+      "profile_quality_score": 6
+    }
+  ]
+}

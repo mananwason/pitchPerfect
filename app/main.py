@@ -1,221 +1,102 @@
-# app/main.py
-
-import asyncio
 import time
 import os
-import openai
-import cv2
 import uuid
-from dotenv import load_dotenv
-from multiprocessing import Process, freeze_support, set_start_method
-from ppadb.client import Client as AdbClient
-
-# Import your prompt engine weight updater
-from prompt_engine import update_template_weights
-from config import OPENAI_API_KEY
-
-# Import your existing helper functions
-from helper_functions import (
-    connect_device,
-    connect_device_remote,
-    get_screen_resolution,
-    open_hinge,
-    swipe,
-    capture_screenshot,
-    extract_text_from_image,  # If you want to keep your original OCR or unify with text_analyzer
-    do_comparision,
-    find_icon,
-    generate_comment,  # If you're using the advanced prompt_engine, you can rename or unify
-    tap,
-    input_text,
-)
-
-# Import data store logic for success-rate tracking
-from data_store import (
-    store_generated_comment,
-    store_feedback,
-    calculate_template_success_rates,
-)
-
-openai.api_key = OPENAI_API_KEY
+from config import DEVICE_IP
+from device import detect_device
+from llm_vision import analyze_profile
+from data_store import store_generated_comment
 
 
-# async def main():
 def main():
-    # device = connect_device_remote(os.getenv("DEVICE_IP", "127.0.0.1"))
-    device = connect_device("127.0.0.1")
-    if not device:
-        return
+    # Auto-detect Android or iOS device
+    device = detect_device()
 
-    width, height = get_screen_resolution(device)
+    width, height = device.get_screen_resolution()
+    print(f"Device resolution: {width}x{height}")
 
-    # Approximate coordinates based on experimentation
-    x_select_like_button_approx = int(width * 0.90)
-    # y_select_like_button_approx = int(height * 0.67 * 0.75)
-    y_select_like_button_approx = int(height * 0.67)
+    # Button coordinates (proportional to screen size)
+    like_btn_x = int(width * 0.90)
+    like_btn_y = int(height * 0.67)
+    dislike_btn_x = int(width * 0.15)
+    dislike_btn_y = int(height * 0.85)
+    comment_btn_x = int(width * 0.50)
+    comment_btn_y = int(height * 0.77)
+    send_btn_x = int(width * 0.85)
+    send_btn_y = int(height * 0.50)
 
-    x_select_comment_button_approx = 540
-    y_select_comment_button_approx = 1755
+    # Swipe coordinates
+    swipe_x = int(width * 0.50)
+    swipe_y1 = int(height * 0.60)
+    swipe_y2 = int(height * 0.35)
 
-    x_select_done_button_approx = int(width * 0.85)
-    y_select_done_button_approx = int(height * 0.50)
-
-    x_send_like_button = int(width * 0.75)
-    y_send_like_button = int(height * 0.80)
-
-    x_dislike_button_approx = int(width * 0.15)
-    y_dislike_button_approx = int(height * 0.85)
-
-    x1_swipe = int(width * 0.15)
-    x2_swipe = x1_swipe
-
-    y1_swipe = int(height * 0.5)
-    y2_swipe = int(y1_swipe * 0.75)
-
-    # Load sample images for matching criteria (like/dislike)
-    like_images = [
-        cv2.imread(path) for path in ["images/like2.jpeg"] if os.path.exists(path)
-    ]
-    dislike_images = [
-        cv2.imread(path) for path in ["images/dislike.jpeg"] if os.path.exists(path)
-    ]
-
-    open_hinge(device=device)
+    device.open_hinge()
     time.sleep(5)
 
-    previous_profile_text = ""
+    num_profiles = int(os.getenv("NUM_PROFILES", "10"))
 
-    # Optionally, run once at the start: recalc success rates & update template weights
-    success_rates = calculate_template_success_rates()
-    update_template_weights(success_rates)
+    for i in range(num_profiles):
+        print(f"\n--- Profile {i + 1}/{num_profiles} ---")
 
-    for _ in range(10):
-        # Swipe to next profile
-        swipe(device, x1_swipe, y1_swipe, x2_swipe, y2_swipe)
-        screenshot_path = capture_screenshot(device, "screen")
+        # Scroll to see profile content
+        device.swipe(swipe_x, swipe_y1, swipe_x, swipe_y2)
+        time.sleep(1)
 
-        # OCR for text extraction (or direct from text_analyzer, whichever you prefer)
-        current_profile_text = extract_text_from_image(screenshot_path).strip()
-        if not current_profile_text:
-            print("Warning: OCR returned empty text.")
+        # Capture screenshot
+        screenshot_path = device.capture_screenshot("screen")
+        print(f"Screenshot saved: {screenshot_path}")
 
-        profile_image = cv2.imread(screenshot_path)
+        # Send screenshot to vision LLM
+        try:
+            result = analyze_profile(screenshot_path)
+            print(f"LLM decision: {result.get('decision')} | reasoning: {result.get('reasoning')}")
+        except Exception as e:
+            print(f"LLM error: {e}. Skipping this profile.")
+            device.tap(dislike_btn_x, dislike_btn_y)
+            time.sleep(2)
+            continue
 
-        # Compare with sample images
-        match_like = do_comparision(profile_image, like_images)
-        match_dislike = do_comparision(profile_image, dislike_images)
+        decision = result.get("decision", "skip")
+        comment = result.get("comment")
 
-        print("Calculated scores => Like:", match_like, "Dislike:", match_dislike)
+        if decision == "like" and comment:
+            print(f"Comment: {comment}")
 
-        # Find the Like button
-        x_select_like_button, y_select_like_button = find_icon(
-            "images/screen.png",
-            "images/heart1.png",
-            threshold=0.75,
-            min_matches=10,
-            approx_x=x_select_like_button_approx,
-            approx_y=y_select_like_button_approx,
-        )
-
-        # Decision-making logic
-        if (
-            match_like * 0 < match_dislike
-            and x_select_like_button is not None
-            and y_select_like_button is not None
-        ):
-            # Generate a comment using your advanced logic or the existing generate_comment
-            # For demonstration, let's assume your 'generate_comment' calls GPT-4, etc.
-            comment = (
-                generate_comment(current_profile_text) or "Hey, I'd love to meet up!"
-            )
-            print(f"Generated Comment: {comment}")
-
-            # Create a comment_id to track feedback
-            comment_id = str(uuid.uuid4())
-
-            # Optionally store the generated comment for analytics
-            # If you used a comedic template, "style_used" might be "comedic", etc.
+            # Store for analytics
             store_generated_comment(
-                comment_id=comment_id,
-                profile_text=current_profile_text,
+                comment_id=str(uuid.uuid4()),
+                profile_text=result.get("reasoning", ""),
                 generated_comment=comment,
-                style_used="unknown",  # Could be comedic/flirty if you parse from the template
+                style_used="vision_llm",
             )
 
-            # Tap Like
-            tap(device, x_select_like_button, y_select_like_button)
-            print("Like tapped at:", x_select_like_button, y_select_like_button)
+            # Tap like
+            device.tap(like_btn_x, like_btn_y)
+            time.sleep(1)
 
-            # Tap to open comment field
-            # tap(device, x_select_comment_button_approx, y_select_comment_button_approx)
+            # Tap comment field
+            device.tap(comment_btn_x, comment_btn_y)
+            time.sleep(0.5)
 
-            # Type the comment (working somewhat)
-            # input_text(device, comment)
-            # capture_screenshot(device, "screen_after_message")
-            # time.sleep(100)
-            # swipe(device, width * 0.65, height * 0.82, width * 0.75, height * 0.82)
+            # Type the comment
+            device.input_text(comment)
+            time.sleep(0.5)
 
-            # while input_text(device, comment):
-            #     capture_screenshot(device, "screen_after_message")
-            #     time.sleep(0.5)
-            #     tap(
-            #         device,
-            #         x_select_comment_button_approx,
-            #         y_select_comment_button_approx,
-            #     )
+            # Send
+            device.tap(send_btn_x, send_btn_y)
+            print("Like sent with comment.")
 
-            # After some period, you could store feedback (maybe you get a callback or check the app)
-            # For demonstration, let's just store "match" or "no match" randomly
-            # store_feedback(comment_id=comment_id, outcome="match")
+        elif decision == "like":
+            device.tap(like_btn_x, like_btn_y)
+            print("Like sent (no comment).")
 
         else:
-            # If same profile text as previous, might be stuck
-            if (
-                previous_profile_text == current_profile_text
-                and current_profile_text != ""
-            ):
-                print("Dislike (same profile encountered again)")
-            else:
-                print("Dislike (new profile or no like match)")
+            device.tap(dislike_btn_x, dislike_btn_y)
+            print("Skipped.")
 
-            print(
-                "Dislike tapped at:", x_dislike_button_approx, y_dislike_button_approx
-            )
-            tap(device, x_dislike_button_approx, y_dislike_button_approx)
-
-        previous_profile_text = current_profile_text
         time.sleep(2)
 
-    # After processing 10 profiles, re-check success rates, update template weights
-    success_rates = calculate_template_success_rates()
-    update_template_weights(success_rates)
-    print("Final success rates:", success_rates)
-    print("Main loop finished.")
-
-
-def test():
-    height = 1080
-    width = 2340
-    device = connect_device()
-    comment = "Hi"
-
-    x_select_comment_button_approx = 540
-    y_select_comment_button_approx = 1755
-
-    swipe(device, width * 0.50, height * 0.70, width * 0.55, height * 0.70)
-    tap(device, x_select_comment_button_approx, y_select_comment_button_approx)
-    # Type the comment
-    input_text(device, comment)
+    print(f"\nDone. Processed {num_profiles} profiles.")
 
 
 if __name__ == "__main__":
-    # async run of main
-    # Windows fix for multiprocessing
-    # freeze_support()
-    # set_start_method("spawn", force=True)
-    # asyncio.run(main())
-
-    # Test for checking only input text
-    # test()
-
     main()

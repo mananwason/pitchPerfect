@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PitchPerfect Screen Payload",
+  "description": "Schema for the multimodal payload sent from device to cloud LLM. Contains a redacted screenshot and structured UI metadata.",
+  "type": "object",
+  "required": ["version", "timestamp_ms", "device", "screen", "ui_elements", "context"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Payload schema version",
+      "enum": ["2.0"]
+    },
+    "timestamp_ms": {
+      "type": "integer",
+      "description": "Unix timestamp in milliseconds when the screen was captured"
+    },
+    "device": {
+      "type": "object",
+      "description": "Device metadata for coordinate scaling and platform-specific behavior",
+      "required": ["resolution", "platform"],
+      "properties": {
+        "resolution": {
+          "type": "array",
+          "description": "Device screen resolution as [width, height] in physical pixels",
+          "items": { "type": "integer" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "density_dpi": {
+          "type": "integer",
+          "description": "Screen density in DPI (e.g., 420 for xxhdpi)"
+        },
+        "platform": {
+          "type": "string",
+          "description": "Mobile platform",
+          "enum": ["android", "ios"]
+        },
+        "app_package": {
+          "type": "string",
+          "description": "Package name of the target app (e.g., co.hinge.app)"
+        }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "description": "The processed screenshot data",
+      "required": ["image_base64", "image_dimensions", "scale_factor"],
+      "properties": {
+        "image_base64": {
+          "type": "string",
+          "description": "Base64-encoded JPEG image of the redacted, cropped, downsampled screenshot. Target size: <200KB encoded."
+        },
+        "image_dimensions": {
+          "type": "array",
+          "description": "Dimensions of the sent image as [width, height] in pixels",
+          "items": { "type": "integer" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "scale_factor": {
+          "type": "array",
+          "description": "Multiplier to convert image coordinates back to device coordinates: [sx, sy]. device_x = image_x * sx, device_y = image_y * sy",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "ui_elements": {
+      "type": "array",
+      "description": "Parsed UI elements from the accessibility tree, mapped to image coordinates",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "bounds"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this element (e.g., 'profile_prompt_1', 'like_button')"
+          },
+          "type": {
+            "type": "string",
+            "description": "Semantic type of the UI element",
+            "enum": [
+              "text_card",
+              "image",
+              "button",
+              "input_field",
+              "label",
+              "container",
+              "video",
+              "icon"
+            ]
+          },
+          "bounds": {
+            "type": "object",
+            "description": "Bounding box in IMAGE pixel coordinates (not device pixels)",
+            "required": ["x", "y", "w", "h"],
+            "properties": {
+              "x": { "type": "integer", "description": "Left edge x-coordinate" },
+              "y": { "type": "integer", "description": "Top edge y-coordinate" },
+              "w": { "type": "integer", "description": "Width in pixels" },
+              "h": { "type": "integer", "description": "Height in pixels" }
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content of the element (from accessibility tree). PII must be stripped before inclusion."
+          },
+          "description": {
+            "type": "string",
+            "description": "Content description for non-text elements (e.g., '[photo region]')"
+          },
+          "interactable": {
+            "type": "boolean",
+            "description": "Whether the user can interact with this element (tap, long-press, etc.)"
+          },
+          "action": {
+            "type": "string",
+            "description": "The type of interaction this element supports",
+            "enum": ["tap", "like_with_comment", "long_press", "scroll", "input_text"]
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "description": "Additional contextual metadata about the current screen state",
+      "required": ["app_screen", "pii_redacted"],
+      "properties": {
+        "app_screen": {
+          "type": "string",
+          "description": "The identified screen/page within the app",
+          "enum": [
+            "profile_view",
+            "profile_detail",
+            "match_list",
+            "conversation",
+            "standouts",
+            "likes_you",
+            "discover",
+            "unknown"
+          ]
+        },
+        "profile_section_visible": {
+          "type": "string",
+          "description": "Which section of the profile is currently visible",
+          "enum": ["photos", "prompts", "basics", "mixed"]
+        },
+        "scroll_position": {
+          "type": "number",
+          "description": "Approximate scroll position as fraction (0.0 = top, 1.0 = bottom)",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "pii_redacted": {
+          "type": "boolean",
+          "description": "Confirmation that PII has been scrubbed from the image and text fields. Must be true."
+        },
+        "redacted_fields": {
+          "type": "array",
+          "description": "List of PII field types that were detected and redacted",
+          "items": {
+            "type": "string",
+            "enum": ["name", "age", "distance", "phone", "email", "instagram", "snapchat", "location"]
+          }
+        },
+        "injection_detected": {
+          "type": "boolean",
+          "description": "Whether prompt injection patterns were detected in profile text"
+        }
+      }
+    }
+  }
+}
