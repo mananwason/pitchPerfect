@@ -45,52 +45,50 @@ def _strip_markdown_fences(raw: str) -> str:
 
 
 def analyze_profile_bedrock(image_path: str) -> dict:
-    """Send screenshot to Claude on AWS Bedrock and get like/skip + comment."""
+    """Send screenshot to Claude on AWS Bedrock using the Converse API with inference profiles."""
     import boto3
 
     client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
-    b64 = encode_screenshot(image_path)
+
+    # Read image bytes
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
 
     # Determine media type
-    media_type = "image/png" if image_path.endswith(".png") else "image/jpeg"
+    if image_path.endswith(".png"):
+        media_format = "png"
+    elif image_path.endswith(".gif"):
+        media_format = "gif"
+    else:
+        media_format = "jpeg"
 
-    body = json.dumps(
-        {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 300,
-            "temperature": 0.8,
-            "system": SYSTEM_PROMPT,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": "Analyze this Hinge profile and generate a response.",
-                        },
-                    ],
-                }
-            ],
-        }
-    )
-
-    response = client.invoke_model(
+    # Use the Converse API — works with inference profiles (us.anthropic.* IDs)
+    response = client.converse(
         modelId=AWS_BEDROCK_MODEL_ID,
-        contentType="application/json",
-        accept="application/json",
-        body=body,
+        system=[{"text": SYSTEM_PROMPT}],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "image": {
+                            "format": media_format,
+                            "source": {"bytes": image_bytes},
+                        }
+                    },
+                    {
+                        "text": "Analyze this Hinge profile and generate a response."
+                    },
+                ],
+            }
+        ],
+        inferenceConfig={
+            "maxTokens": 300,
+            "temperature": 0.8,
+        },
     )
 
-    result = json.loads(response["body"].read())
-    raw = result["content"][0]["text"]
+    raw = response["output"]["message"]["content"][0]["text"]
     return json.loads(_strip_markdown_fences(raw))
 
 
