@@ -4,14 +4,28 @@ Unified device interface for Android (ADB) and iOS (WebDriverAgent).
 Android: uses pure-python-adb (ppadb)
 iOS: uses pymobiledevice3 + facebook-wda (WebDriverAgent)
 
-iOS setup:
+iOS setup (iOS 17+):
   1. pip install pymobiledevice3 facebook-wda
   2. Install WebDriverAgent on your iPhone via Xcode
-  3. Connect iPhone via USB, then in Terminal 1:
-     python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner
-  4. In Terminal 2, forward port 8100:
+  3. Connect iPhone via USB
+
+  Terminal 1 — Start tunneld daemon (requires sudo):
+     sudo python3 -m pymobiledevice3 remote tunneld
+     # Keeps running — manages tunnels to all connected iOS devices
+
+  Terminal 2 — Start WDA through tunneld:
+     python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner --tunnel ""
+     # --tunnel "" auto-discovers the device via the tunneld from Terminal 1
+
+  Terminal 3 — Forward WDA port to localhost:
      python3 -m pymobiledevice3 usbmux forward 8100 8100
-  5. WDA is now at http://localhost:8100. Run:
+
+  Terminal 4 — Run PitchPerfect:
+     cd app && python3 main.py
+
+  For iOS <17 (no tunnel needed):
+     python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner
+     python3 -m pymobiledevice3 usbmux forward 8100 8100
      cd app && python3 main.py
 """
 
@@ -113,9 +127,10 @@ class IOSDevice(Device):
         except Exception as e:
             raise ConnectionError(
                 f"Cannot connect to WDA at {wda_url}: {e}\n"
-                "Make sure WebDriverAgent is running. Start it with:\n"
-                "  Terminal 1: python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner\n"
-                "  Terminal 2: python3 -m pymobiledevice3 usbmux forward 8100 8100"
+                "Make sure WebDriverAgent is running:\n"
+                "  1) sudo python3 -m pymobiledevice3 remote tunneld\n"
+                "  2) python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner --tunnel \"\"\n"
+                "  3) python3 -m pymobiledevice3 usbmux forward 8100 8100"
             )
 
     def get_screen_resolution(self) -> tuple:
@@ -178,7 +193,8 @@ def detect_device() -> Device:
         "No device found. Ensure either:\n"
         "  Android: ADB is running (adb devices)\n"
         "  iOS: Start WDA with:\n"
-        "    Terminal 1: python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner\n"
-        "    Terminal 2: python3 -m pymobiledevice3 usbmux forward 8100 8100\n"
+        "    1) sudo python3 -m pymobiledevice3 remote tunneld\n"
+        "    2) python3 -m pymobiledevice3 developer dvt xcuitest com.facebook.WebDriverAgentRunner.xctrunner --tunnel \"\"\n"
+        "    3) python3 -m pymobiledevice3 usbmux forward 8100 8100\n"
         "Or set DEVICE_PLATFORM=android|ios in .env"
     )
